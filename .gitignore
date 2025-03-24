@@ -1,0 +1,8 @@
+photo-server/.local
+photos
+photo-server/target
+photo-server/server.key
+photo-server/thetoaster_ddns_net.pem
+ui/node_modules
+ui/dist
+ui/.angular

@@ -1,0 +1,46 @@
+.image-container {
+  :hover {
+    cursor: pointer;
+  }
+}
+
+.fullscreen {
+  position: absolute;
+  left: 0;
+  width: auto;
+  height: 100vh;
+}
+
+.image {
+  height: auto;
+  width: 100%;
+}
+
+.temp {
+  color: blue;
+  width: 100%;
+  text-align: center;
+}
+
+.placeholder {
+  //width: 100%;
+  padding-top: 66.6%; // normal aspect ratio
+  align-content: center;
+  background-color: aliceblue;
+  border-radius: 20px;
+  margin-left: 20px;
+  margin-right: 20px;
+  filter: drop-shadow(16px 16px 10px black);
+}
+
+.negMargin {
+  margin-top: -42%;
+}
+
+.blur {
+  filter: blur(4px);
+}
+
+.none {
+  display: none;
+}

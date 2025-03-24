@@ -1,0 +1,24 @@
+@let _fullSrc = fullSrc(); @if(_fullSrc) {
+
+<div
+  #imageContainer
+  class="image-container"
+  [ngClass]="{
+    fullscreen: isFullScreen(),
+    placeholder: !hasLoaded()
+  }"
+  (click)="click()"
+>
+  <div
+    [ngClass]="{
+      negMargin: !hasLoaded()
+    }"
+  >
+    <app-loader [visible]="!hasLoaded()"></app-loader>
+  </div>
+
+  <div *ngIf="hasLoadingStarted()">
+    <img class="image" [src]="_fullSrc" (load)="onLoad()" />
+  </div>
+</div>
+}

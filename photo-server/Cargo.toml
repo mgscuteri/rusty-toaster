@@ -1,0 +1,30 @@
+[package]
+name = "photo_server"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "photo_server"
+path = "src/main.rs"
+
+[lib]
+name = "lib"
+path = "src/lib.rs"
+
+
+[dependencies]
+actix-web = { version = "4", features = ["openssl"] }
+openssl = { version = "0.10", features = ["vendored"] }
+actix-rt = "2.5"
+actix-files = "0.6"
+rustls = "0.23"
+env_logger = "0.10"
+mime_guess = "2.0"
+tokio = { version = "1", features = ["fs", "io-util"] }
+futures-util = "0.3"
+actix-cors = "0.6"
+serde = { version = "1.0", features = ["derive"] }
+
+
+
+

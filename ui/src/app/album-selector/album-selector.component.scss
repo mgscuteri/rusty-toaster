@@ -1,0 +1,15 @@
+.album-selector-container {
+  width: 100%;
+}
+
+.album-name {
+  padding-top: 20px;
+  padding-bottom: 8px;
+}
+
+.album-selector-contents {
+  width: 100%;
+  :hover {
+    cursor: pointer;
+  }
+}
