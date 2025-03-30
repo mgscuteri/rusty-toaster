@@ -1,73 +1,191 @@
-use std::{env, path::PathBuf};
-
-use actix_cors::Cors;
-use actix_web::{ middleware::Logger, web, App, HttpServer};
-use actix_ratelimit::{RateLimiter, MemoryStore, MemoryStoreActor};
-use actix_extensible_rate_limit::{
-    backend::{memory::InMemoryBackend, SimpleInputFunctionBuilder},
-    RateLimiter,
+use rocket::{
+    config::{Config, TlsConfig}, data::{ByteUnit, Limits, ToByteUnit}, fs::NamedFile, get, http::{ContentType, MediaType, Status}, launch, routes, serde::{json::Json, Serialize}, Build, Rocket, State
 };
-use lib::controllers::{hello::{echo, hello, test}, photo::{list_albums, list_photos, serve_photo}, ui::{serve_static, serve_static_file}};
-use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
-use actix_web::http::header;
+use dashmap::DashMap;
+use std::{collections::HashMap, path::{Path, PathBuf}, sync::Arc, fs::OpenOptions, io::Write};
+use lazy_static::lazy_static;
+use tokio::fs;
+use tokio::sync::Mutex;
+use mime_guess::{self, Mime};
+use bytes::Bytes;
+use num_cpus;
 
-#[actix_web::main]
-async fn main() -> std::io::Result<()> {
-    println!("Current working directory: {:?}", env::current_dir());
-    println!("Serving static files from: {:?}", std::fs::canonicalize("../photos"));
-    println!("Checking file metadata:");
-    println!("{:?}", std::fs::metadata("../photos/Aquairium/DSCF0429.JPG"));
+// --------------------------
+// Global Constants
+// --------------------------
+const PHOTOS_DIR: &str = "../photos";
+const UI_BASE_DIR: &str = "../ui/dist/photo-lib/browser";
 
-    // Setup Rate limiting
-    let backend = InMemoryBackend::builder().build();
-    let input = SimpleInputFunctionBuilder::new(Duration::from_secs(60), 100) // 100 requests per minute
-        .real_ip_key() // Use client IP for rate limiting
-        .build();
+// --------------------------
+// Global File Cache
+// --------------------------
+pub type FileBufferCache = Arc<DashMap<String, Arc<Vec<u8>>>>;
 
-    let middleware = RateLimiter::builder(backend.clone(), input)
-        .add_headers() // Add rate limit headers to responses
-        .build();
+#[derive(Clone)]
+struct FileCache {
+    map: FileBufferCache,
+}
 
-    // Setup Certs
-    let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls()).unwrap();
-    builder
-        .set_private_key_file("server.key", SslFiletype::PEM)
-        .unwrap();
-    builder.set_certificate_chain_file("thetoaster_ddns_net.pem").unwrap();
+impl FileCache {
+    fn new() -> Self {
+        Self { map: Arc::new(DashMap::new()) }
+    }
+}
 
-    HttpServer::new(|| {
-        App::new()
-            .app_data(web::PayloadConfig::new(10 * 1024))
-            .wrap(Logger::default())
-            .wrap(
-                Cors::default()
-                    .allow_any_origin() // Allow any origin (for development, not recommended in production)
-                    .allowed_methods(vec!["GET", "POST", "OPTIONS"]) // Allow specific HTTP methods
-                    .allowed_headers(vec![header::CONTENT_TYPE])
-                    .max_age(3600), // Cache the CORS response for 1 hour
-            )
-            .service(
-                web::resource("/")
-                    .route(web::get().to(|| async {
-                        serve_static_file(PathBuf::from("index.html")).await
-                    })),
-            )
-            .service(serve_static)
-            .service(list_albums)
-            .service(list_photos)
-            .service(serve_photo)
-            .service(hello)
-            .service(echo)
-            .service(test)
-            .default_service(
-                web::route().to(|| async {
-                    // Forward unmatched requests to serve_static with index.html
-                    serve_static_file(PathBuf::from("index.html")).await
-                }),
-            )
-    })
-    //.bind(("0.0.0.0", 80))?
-    .bind_openssl("0.0.0.0:443", builder)?
-    .run()
-    .await
+// --------------------------
+// File Locking for Synchronized Reads
+// --------------------------
+lazy_static! {
+    static ref FILE_LOCKS: Mutex<HashMap<String, Mutex<()>>> = Mutex::new(HashMap::new());
+}
+
+/// Reads a file using a per‑file asynchronous lock.
+async fn read_file_with_lock(file_path: &str) -> Result<Vec<u8>, std::io::Error> {
+    let mut locks = FILE_LOCKS.lock().await;
+    let file_lock = locks.entry(file_path.to_string()).or_insert_with(|| Mutex::new(()));
+    let _guard = file_lock.lock().await;
+    fs::read(file_path).await
+}
+
+// --------------------------
+// Helper: Convert mime::Mime to Rocket ContentType
+// --------------------------
+fn content_type_from_mime(mime: &Mime) -> ContentType {
+    let mt: MediaType = mime
+        .to_string()
+        .parse()
+        .unwrap_or_else(|_| MediaType::new("application", "octet-stream"));
+    ContentType::from(mt)
+}
+
+// --------------------------
+// Endpoints
+// --------------------------
+#[get("/albums/<album>/<photo>")]
+async fn serve_photo(album: &str, photo: &str, cache: &State<FileCache>) -> Result<(ContentType, Vec<u8>), Status> {
+    let file_path = Path::new(PHOTOS_DIR).join(album).join(photo);
+
+    // Validate the file path to guard against directory traversal.
+    if !file_path.starts_with(PHOTOS_DIR) {
+        return Err(Status::BadRequest);
+    }
+
+    // Canonicalize the file path.
+    let canonical_file = fs::canonicalize(&file_path)
+        .await
+        .map_err(|_| Status::NotFound)?;
+    let key = canonical_file.to_string_lossy().to_string();
+
+    // Check if the file is in the cache.
+    if let Some(cached) = cache.map.get(&key) {
+        let mime = mime_guess::from_path(&canonical_file).first_or_octet_stream();
+        let ct = content_type_from_mime(&mime);
+        return Ok((ct, (**cached.value()).clone()));
+    }
+
+    // Not cached: read the file with a lock.
+    let data = read_file_with_lock(&key).await.map_err(|_| Status::NotFound)?;
+    let arc_data = Arc::new(data.clone());
+    cache.map.insert(key, arc_data);
+
+    let mime = mime_guess::from_path(&canonical_file).first_or_octet_stream();
+    let ct = content_type_from_mime(&mime);
+    Ok((ct, data))
+}
+
+#[derive(Serialize)]
+#[serde(crate = "rocket::serde")]
+struct Album {
+    albumName: String,
+    thumbNail: String,
+}
+
+#[get("/albums")]
+fn list_albums() -> Json<Vec<Album>> {
+    let mut albums = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(PHOTOS_DIR) {
+        for entry in entries.filter_map(Result::ok) {
+            let album_name = entry.file_name().into_string().unwrap_or_else(|_| "Invalid UTF-8".into());
+            let album_path = entry.path();
+            let photos = get_photos_in_album(album_path.to_str().unwrap_or(""));
+            let thumb = photos.get(0).cloned().unwrap_or_default();
+            albums.push(Album { albumName: album_name, thumbNail: thumb });
+        }
+    }
+    Json(albums)
+}
+
+#[get("/albums/<album>")]
+fn list_photos(album: &str) -> Json<Vec<String>> {
+    let album_path = format!("{}/{}", PHOTOS_DIR, album);
+    let photos: Vec<String> = std::fs::read_dir(&album_path)
+        .map(|iter| {
+            iter.filter_map(|e| {
+                if let Ok(entry) = e {
+                    let s = entry.file_name().into_string().ok()?;
+                    if s.starts_with('.') || s.ends_with(".Identifier") {
+                        None
+                    } else {
+                        Some(s)
+                    }
+                } else {
+                    None
+                }
+            }).collect()
+        })
+        .unwrap_or_default();
+    Json(photos)
+}
+
+fn get_photos_in_album(album_path: &str) -> Vec<String> {
+    std::fs::read_dir(album_path)
+        .map(|iter| {
+            iter.filter_map(|e| {
+                if let Ok(entry) = e {
+                    let s = entry.file_name().into_string().ok()?;
+                    if !s.starts_with("._") {
+                        Some(s)
+                    } else {
+                        None
+                    }
+                } else { None }
+            }).collect()
+        })
+        .unwrap_or_default()
+}
+
+#[get("/static/<path..>")]
+async fn serve_static(path: PathBuf) -> Option<NamedFile> {
+    let base = PathBuf::from(UI_BASE_DIR);
+    NamedFile::open(base.join(path)).await.ok()
+}
+
+#[get("/")]
+async fn index() -> Option<NamedFile> {
+    NamedFile::open(PathBuf::from(UI_BASE_DIR).join("index.html"))
+        .await
+        .ok()
+}
+
+// --------------------------
+// Main: Launch Rocket Application
+// --------------------------
+#[launch]
+fn rocket() -> Rocket<Build> {
+    // Create the shared file cache.
+    let file_cache = FileCache::new();
+
+    // Build Rocket configuration using Figment.
+    let config = Config {
+        address: "0.0.0.0".parse().unwrap(),
+        port: 443,
+        workers: num_cpus::get(),        
+        // TLS configuration using existing PEM certificates (no new cert required).
+        tls: Some(TlsConfig::from_paths("thetoaster_ddns_net.pem", "server.key")),
+        ..Config::default()
+    };
+
+    rocket::custom(config)
+        .mount("/", routes![index, serve_static, serve_photo, list_albums, list_photos])
+        .manage(file_cache)
 }

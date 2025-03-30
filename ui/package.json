@@ -1,6 +1,7 @@
 {
   "name": "photo-lib",
   "version": "0.0.0",
+  "type": "module",
   "scripts": {
     "ng": "ng",
     "start": "ng serve",
@@ -27,13 +28,21 @@
     "@angular-devkit/build-angular": "^18.2.2",
     "@angular/cli": "^18.2.2",
     "@angular/compiler-cli": "^18.2.0",
+    "@playwright/test": "^1.51.1",
+    "@rollup/plugin-node-resolve": "^16.0.1",
     "@types/jasmine": "~5.1.0",
+    "@web/dev-server-esbuild": "^1.0.4",
+    "@web/dev-server-rollup": "^0.6.4",
+    "@web/test-runner": "^0.18.3",
+    "@web/test-runner-playwright": "^0.11.0",
+    "jasmine": "^5.6.0",
     "jasmine-core": "~5.2.0",
     "karma": "~6.4.0",
     "karma-chrome-launcher": "~3.2.0",
     "karma-coverage": "~2.2.0",
     "karma-jasmine": "~5.1.0",
     "karma-jasmine-html-reporter": "~2.1.0",
+    "rollup-plugin-tsconfig-paths": "^1.5.2",
     "typescript": "~5.5.2"
   }
 }
