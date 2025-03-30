@@ -215,6 +215,11 @@ async fn index() -> Option<NamedFile> {
         .ok()
 }
 
+#[get("/<path..>", rank = 2)] // `rank = 2` ensures this route is less prioritized than others.
+async fn catch_all(path: PathBuf) -> Option<NamedFile> {
+    NamedFile::open(Path::new(UI_BASE_DIR).join("index.html")).await.ok()
+}
+
 // --------------------------
 // Main: Launch Rocket Application
 // --------------------------
@@ -250,7 +255,7 @@ fn rocket() -> Rocket<Build> {
     .expect("Error creating CORS fairing");
 
     rocket::custom(config)
-        .mount("/", routes![index, serve_static, serve_photo, list_albums, list_photos])
+        .mount("/", routes![index, serve_static, serve_photo, list_albums, list_photos, catch_all])
         .manage(file_cache)
         .manage(rate_limit_map)
         .attach(cors)
