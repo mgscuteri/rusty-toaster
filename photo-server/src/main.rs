@@ -2,6 +2,11 @@ use std::{env, path::PathBuf};
 
 use actix_cors::Cors;
 use actix_web::{ middleware::Logger, web, App, HttpServer};
+use actix_ratelimit::{RateLimiter, MemoryStore, MemoryStoreActor};
+use actix_extensible_rate_limit::{
+    backend::{memory::InMemoryBackend, SimpleInputFunctionBuilder},
+    RateLimiter,
+};
 use lib::controllers::{hello::{echo, hello, test}, photo::{list_albums, list_photos, serve_photo}, ui::{serve_static, serve_static_file}};
 use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
 use actix_web::http::header;
@@ -13,6 +18,17 @@ async fn main() -> std::io::Result<()> {
     println!("Checking file metadata:");
     println!("{:?}", std::fs::metadata("../photos/Aquairium/DSCF0429.JPG"));
 
+    // Setup Rate limiting
+    let backend = InMemoryBackend::builder().build();
+    let input = SimpleInputFunctionBuilder::new(Duration::from_secs(60), 100) // 100 requests per minute
+        .real_ip_key() // Use client IP for rate limiting
+        .build();
+
+    let middleware = RateLimiter::builder(backend.clone(), input)
+        .add_headers() // Add rate limit headers to responses
+        .build();
+
+    // Setup Certs
     let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls()).unwrap();
     builder
         .set_private_key_file("server.key", SslFiletype::PEM)
@@ -21,6 +37,7 @@ async fn main() -> std::io::Result<()> {
 
     HttpServer::new(|| {
         App::new()
+            .app_data(web::PayloadConfig::new(10 * 1024))
             .wrap(Logger::default())
             .wrap(
                 Cors::default()

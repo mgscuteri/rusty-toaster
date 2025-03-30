@@ -15,28 +15,32 @@ async fn serve_photo(params: web::Path<(String, String)>) -> impl Responder {
 
     println!("Attempting to serve file: {:?}", file_path);
 
-    match tokio::fs::File::open(&file_path).await { // Borrow file_path
+    match tokio::fs::File::open(&file_path).await {
         Ok(file) => {
-            let stream = Box::pin(futures_util::stream::unfold((file, Vec::new()), move |(mut file, mut buffer)| async move {
-                buffer.resize(8192, 0); // Allocate or resize the buffer to 8 KB
+            // Reusable buffer initialized to 64 KB
+            let mut buffer = vec![0; 65536]; // 64 KB buffer size
 
+            let stream = Box::pin(futures_util::stream::unfold((file, buffer), move |(mut file, mut buffer)| async move {
                 match file.read(&mut buffer).await {
                     Ok(0) => None, // End of file
                     Ok(n) => {
-                        buffer.truncate(n); // Keep only the valid portion
-                        Some((Ok(web::Bytes::copy_from_slice(&buffer)), (file, Vec::new())))
+                        let chunk = web::Bytes::copy_from_slice(&buffer[..n]); // Create a chunk from the valid portion
+                        Some((Ok(chunk), (file, buffer))) // Reuse the buffer
                     }
-                    Err(e) => Some((Err(e), (file, Vec::new()))),
+                    Err(e) => {
+                        eprintln!("Error reading file: {:?}", e);
+                        Some((Err(e), (file, buffer))) // Propagate the error while reusing the buffer
+                    }
                 }
             }));
 
             HttpResponse::Ok()
-                .content_type(mime_guess::from_path(&file_path).first_or_octet_stream().to_string()) // Borrow file_path
+                .content_type(mime_guess::from_path(&file_path).first_or_octet_stream().to_string())
                 .streaming(stream)
         }
         Err(e) => {
             println!("Error reading file: {:?}", e);
-            HttpResponse::NotFound().body(format!("File not found: {:?}", file_path)) // Clone file_path here
+            HttpResponse::NotFound().body(format!("File not found: {:?}", file_path))
         }
     }
 }

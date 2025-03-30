@@ -24,6 +24,8 @@ tokio = { version = "1", features = ["fs", "io-util"] }
 futures-util = "0.3"
 actix-cors = "0.6"
 serde = { version = "1.0", features = ["derive"] }
+actix-ratelimit = "0.3.1"
+actix-extensible-rate-limit = "0.4.0"
 
 
 
