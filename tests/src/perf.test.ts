@@ -63,7 +63,7 @@ describe("performance", () => {
 
   test("Traffic without delays", async () => {
     const endpoint = `${baseURL}/albums/JellyFish/DSCF0461.JPG`; // Replace with your actual endpoint
-    const totalRequests = 5; // Number of requests
+    const totalRequests = 100; // Number of requests
 
     // Create an array of Promises for simultaneous requests
     const requests = Array.from({ length: totalRequests }, async () => {
@@ -80,8 +80,11 @@ describe("performance", () => {
       }
     });
 
+    const start = Date.now();
     // Wait for all requests to complete
     const results: number[] = await Promise.all(requests);
+    const duration = (Date.now() - start) / 1000;
+    console.log(`Test completed in ${duration} s`);
 
     // Log the response codes for debugging purposes
     console.log("Response Codes:", results);

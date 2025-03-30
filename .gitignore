@@ -6,3 +6,4 @@ photo-server/thetoaster_ddns_net.pem
 ui/node_modules
 ui/dist
 ui/.angular
+tests/node_modules
